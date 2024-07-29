@@ -2,15 +2,10 @@ import * as pulumi from "@pulumi/pulumi";
 import * as aws from "@pulumi/aws";
 import * as docker_build from "@pulumi/docker-build"
 
-const stackName = pulumi.getStack();
 const lambdaLayerPath = "./dist"
 
-const layerImage = new docker_build.Image(`${stackName}-docker-layer-image`, {
+const buildLambdaCode = new docker_build.Image(`docker-build-lambda-code`, {
     push: false,
-    labels: {
-        string: "cc-docker-layer",
-    },
-    network: docker_build.NetworkMode.Host,
     context: {
         location: "./lambda",
     },
@@ -22,10 +17,21 @@ const layerImage = new docker_build.Image(`${stackName}-docker-layer-image`, {
             dest: lambdaLayerPath,
         },
     }],
+    labels: {
+        "created": new Date().getTime().toString()
+    }
 });
 
-const lambdaLayer = new aws.lambda.LayerVersion("cc-lambda-layer", {
-    code: new pulumi.asset.FileArchive(lambdaLayerPath),
-    layerName: `piers-test-layer`,
-    compatibleRuntimes: ["nodejs20.x", "nodejs18.x"],
-}, {dependsOn: [layerImage]});
+const role = new aws.iam.Role("lambdarole", {
+    assumeRolePolicy: aws.iam.assumeRolePolicyForPrincipal(aws.iam.Principals.LambdaPrincipal),
+    managedPolicyArns: [aws.iam.ManagedPolicies.AWSLambdaBasicExecutionRole]
+});
+
+const fn = new aws.lambda.Function("fn", {
+    role: role.arn,
+    code: new pulumi.asset.AssetArchive({
+        ".": new pulumi.asset.FileArchive("./dist")
+    }),
+    handler: "index.handler",
+    runtime: aws.lambda.Runtime.NodeJS20dX
+}, {dependsOn: [buildLambdaCode]})
